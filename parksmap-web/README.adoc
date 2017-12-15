@@ -1,0 +1,11 @@
+= Parksmap application
+This application is a frontend web and gateway to backend services that provide geolocation data on services
+
+== Backends
+Backend services require to have an specific annotation to be discovered:
+
+----
+type: parksmap-backend
+----
+
+Every backend should provide an endpoint located at */ws/info* that will provide link:src/main/java/com/openshift/evg/roadshow/rest/gateway/model/Backend.java[Backend] information.

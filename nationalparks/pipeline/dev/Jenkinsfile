@@ -1,0 +1,54 @@
+#!groovy
+node('maven') {
+   // define commands
+   def mvnCmd = "mvn -s pipeline/dev/configuration/maven-settings.xml"
+
+   stage ('Build') {
+     //Jenkins & gogs are in the same namespace
+     git branch: 'master', url: 'http://gogs:3000/serhat/nationalparks.git'
+     sh "${mvnCmd} clean install sonar:sonar -Dsonar.host.url=http://sonarqube-serhat-hw-sonar.apps.c239.openshift.opentlc.com"
+   }
+
+   stage ('Unit Test & Static Analysis') {
+        parallel(
+           "phaseUnitTest": {
+               //sh "${mvnCmd} test"
+               echo "Remember that unit tests should be  done as the part of builds :)"  
+           },
+		   "phaseStaticAnalysis": {
+               //sh "${mvnCmd} sonar:sonar -Dsonar.host.url=http://sonarqube-serhat-hw-sonar.apps.c239.openshift.opentlc.com -DskipTests=true"
+               echo "Sonar plug-in also executed as part of the build to prevent double compile, double downlad of artifacts"
+           }
+        )
+   }
+  
+   stage ('Deploy DEV') {
+     def v = version()
+    echo "Building image with the latest jar"
+    sh "oc start-build nationalparks --from-file=./target/nationalparks.jar  --wait=true --follow -n serhat-hw-dev"
+    echo "Verifying the build..."
+    openshiftVerifyBuild(buildConfig: 'nationalparks', namespace: 'serhat-hw-dev', waitTime: 900000)
+    echo "Build is also triggered to deployment to DEV environment"
+    openshiftVerifyDeployment(deploymentConfig: "nationalparks", replicaCount: 1, verifyReplicaCount: true, namespace: 'serhat-hw-dev')
+    echo "Verifying the deployment..." 
+   }
+
+   stage ('Deploy Test') {
+     def v = version()
+     echo 'Promoting dev to test ...'
+     openshiftTag(sourceStream: 'nationalparks', sourceTag: 'latest', namespace: 'serhat-hw-dev', destinationStream: 'nationalparks', destinationTag: "test", destinationNamespace: 'serhat-hw-dev')
+     openshiftTag(sourceStream: 'nationalparks', sourceTag: 'latest', namespace: 'serhat-hw-dev', destinationStream: 'nationalparks', destinationTag: "test-${v}", destinationNamespace: 'serhat-hw-dev')
+     echo 'Deploying ...'
+     sleep 22
+     openshiftVerifyDeployment(deploymentConfig: "nationalparks", replicaCount: 1, verifyReplicaCount: true, namespace: 'serhat-hw-test')
+   }
+   
+   stage ('Push to Nexus') {
+    sh "${mvnCmd} deploy -DskipTests=true -DaltDeploymentRepository=nexus::default::http://nexus:8081/content/repositories/snapshots/"
+   }
+}
+
+def version() {
+  def matcher = readFile('pom.xml') =~ '<version>(.+)</version>'
+  matcher ? matcher[0][1] : null
+}

@@ -1,0 +1,50 @@
+#!groovy
+node('maven') {
+   // define commands
+   def mvnCmd = "mvn -s pipeline/deploy/configuration/maven-settings.xml"
+
+   stage ('Execute Integration Tests') {
+     //Jenkins & gogs are in the same namespace
+     git branch: 'master', url: 'http://gogs:3000/serhat/nationalparks.git'
+     sh "${mvnCmd} test -Dskip.unit.tests"
+   }
+
+   def tag="blue"
+   def altTag="green"
+
+   stage ('Deploy PROD') {
+    echo "Deploying to prod..."
+    //Find the active service
+    sh "oc get route nationalparks -n serhat-hw-prod -o jsonpath='{ .spec.to.name }' > activeservice"
+    activeService = readFile('activeservice').trim()
+    echo "Active Service : ${activeService}"
+    if (activeService == "nationalparks-blue") {
+        tag = "green"
+        altTag = "blue"
+    }
+    echo "Deploying  nationalparks-${tag}"
+    openshiftTag(sourceStream: 'nationalparks', sourceTag: 'latest', namespace: 'serhat-hw-dev', destinationStream: 'nationalparks', destinationTag: "prod-${tag}", destinationNamespace: 'serhat-hw-dev')
+    sleep 25
+    echo "Verifying the deployment..."
+    openshiftVerifyDeployment(deploymentConfig: "nationalparks-${tag}", replicaCount: 1, verifyReplicaCount: true, namespace: 'serhat-hw-prod')
+     
+   }
+    
+    stage ('Smoke Tests in PROD (Not Live)! This is your part to play!!'){
+                                           
+    }
+
+
+   stage ('Approve to go Live (You have 30 minutes to complete this step) ??') {
+     
+     timeout(time:30, unit:'MINUTES') {
+        input message:'Go Live in Production (switch to new version ${tag} )?' , ok: "Promote ${tag}"
+     }
+   
+     sh "oc set route-backends nationalparks nationalparks-${tag}=100 nationalparks-${altTag}=0 -n serhat-hw-prod"
+     sh "oc label svc nationalparks-${altTag} state=idle --overwrite -n serhat-hw-prod"
+     sh "oc label svc nationalparks-${tag} state=active --overwrite -n serhat-hw-prod"
+     echo "Now the prod deployment switched to the ${tag} version"
+   }
+
+}
